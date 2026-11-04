@@ -5,6 +5,10 @@ A small Wayland compositor built on [wlroots], forked from
 C core and adds Lua configuration, multi-monitor setup, animations, gaps and extra
 layouts.
 
+rwm is a modified version of dwl, licensed under the GNU GPLv3 like dwl itself.
+Changes from upstream are documented in the git history and in the feature list
+below.
+
 [rwm-upstream]: https://github.com/Rzfan03/rwm
 
 ## Features

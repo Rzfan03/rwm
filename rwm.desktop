@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=rwm
+Comment=rzfan03 window manager (Wayland compositor, fork of dwl)
+Exec=rwm
+Type=Application

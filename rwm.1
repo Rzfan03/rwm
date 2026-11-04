@@ -1,0 +1,389 @@
+.Dd January 8, 2021
+.Dt RWM 1
+.Os
+.Sh NAME
+.Nm rwm
+.Nd Wayland compositor with a Lua configuration, forked from dwl
+.Sh SYNOPSIS
+.Nm
+.Op Fl v
+.Op Fl d
+.Op Fl t
+.Op Fl g
+.Op Fl c Ar config.lua
+.Op Fl s Ar startup command
+.Sh DESCRIPTION
+.Nm
+is a Wayland compositor based on wlroots.
+It is intended to fill the same space in the Wayland world that
+.Nm dwm
+does for X11.
+.Pp
+When given the
+.Fl v
+option,
+.Nm
+writes its name and version to standard error and exits unsuccessfully.
+.Pp
+When given the
+.Fl d
+option,
+.Nm
+enables full wlroots logging, including debug information.
+.Pp
+When given the
+.Fl c
+option,
+.Nm
+reads the given Lua file instead of searching for one.
+.Pp
+When given the
+.Fl t
+option,
+.Nm
+checks the configuration, prints any problems and exits.
+.Pp
+When given the
+.Fl g
+option,
+.Nm
+prints the default
+.Pa config.lua
+to standard output and exits, e.g.
+.Dl rwm \-g > ~/.config/rwm/config.lua
+.Pp
+When given the
+.Fl s
+option,
+.Nm
+starts a shell process running
+.Ar command
+when starting.
+When stopping, it sends
+.Dv SIGTERM
+to the child process group and waits for it to exit.
+.Sh CONFIGURATION
+.Nm
+is configured with a Lua script that returns a table.
+The first of these files that exists is used:
+.Ev RWM_CONFIG ,
+.Pa $XDG_CONFIG_HOME/rwm/config.lua ,
+.Pa ~/.config/rwm/config.lua ,
+.Pa /etc/rwm/config.lua .
+Keys that are left out keep their built-in default, so the file only needs
+to contain what differs; lists (binds, monitors, rules, mouse, scroll,
+autostart) replace the default list when present.
+Unknown keys and bad values are reported as warnings and in a notification
+when
+.Xr notify-send 1
+is available; a Lua error at startup makes
+.Nm
+fall back to the built-in defaults.
+.Pp
+The configuration can be reloaded without restarting, either with the
+.Em reload
+action (Mod-Shift-r by default) or by sending
+.Dv SIGUSR1
+to
+.Nm .
+Gaps, borders, colors, animations, keybindings, rules, monitor settings and
+the keyboard layout are applied live.
+Pointer settings, the cursor theme, the number of tags and the log level
+need a restart.
+If the new file has an error, the previous configuration stays active.
+.Pp
+The main sections are
+.Em general ,
+.Em appearance ,
+.Em gaps ,
+.Em animations ,
+.Em keyboard ,
+.Em input ,
+.Em cursor ,
+.Em monitors ,
+.Em rules ,
+.Em binds ,
+.Em mouse ,
+.Em scroll ,
+.Em autostart
+and
+.Em env .
+Every option is documented in the comments of the default file
+(see
+.Fl g ) .
+.Ss Monitors
+Each entry of
+.Em monitors
+may set the mode (\(dqpreferred\(dq, \(dqhighres\(dq, \(dqhighrr\(dq,
+\(dq1920x1080\(dq or \(dq1920x1080@144\(dq), scale, transform, adaptive sync,
+the initial layout, and the position: absolute (\(dq1920x0\(dq) or
+relative to another output
+(\(dqright-of:eDP-1\(dq, \(dqleft-of:\(dq, \(dqabove:\(dq, \(dqbelow:\(dq,
+optionally with
+.Em align
+set to start, center or end).
+Relative positions are resolved again whenever monitors are plugged or
+unplugged.
+Positions are shifted so the layout has no negative coordinates, which
+Xwayland cannot handle.
+Tools such as
+.Xr wlr-randr 1
+and
+.Xr kanshi 1
+keep working, since
+.Nm
+implements the wlr-output-management protocol.
+.Ss Animations
+Windows glide to their new place when the layout changes and new windows
+zoom and fade in.
+Animations are driven by the output's frame callbacks, so they follow the
+monitor's refresh rate.
+.Pp
+The default key bindings are as follows:
+.Bl -tag -width 20n -offset indent -compact
+.It Mod-[1-9]
+Show only all windows with a tag.
+.It Mod-Ctrl-[1-9]
+Show all windows with a tag.
+.It Mod-Shift-[1-9]
+Move window to a single tag.
+.It Mod-Ctrl-Shift-[1-9]
+Toggle tag for window.
+.It Mod-p
+Spawn
+.Xr wmenu-run 1 .
+.It Mod-Shift-Return
+Spawn
+.Xr foot 1 .
+.It Mod-[jk]
+Move focus down/up the stack.
+.It Mod-[id]
+Increase/decrease number of windows in master area.
+.It Mod-[hl]
+Decrease/increase master area.
+.It Mod-Return
+Move window on top of stack or switch top of stack with second window.
+.It Mod-Tab
+Show only all windows with previous tag.
+.It Mod-Shift-c
+Close window.
+.It Mod-t
+Switch to tiled layout.
+.It Mod-f
+Switch to floating layout.
+.It Mod-m
+Switch to monocle layout.
+.It Mod-g
+Switch to grid layout.
+.It Mod-s
+Switch to spiral layout.
+.It Mod-w
+Switch to dwindle layout.
+.It Mod-u
+Switch to centered master layout.
+.It Mod-b
+Switch to bottom stack layout.
+.It Mod-y
+Switch to deck layout.
+.It Mod-c
+Switch to columns layout.
+.It Mod-n
+Next layout.
+.It Mod-Shift-n
+Previous layout.
+.It Mod-Space
+Switch to previous layout.
+.It Mod-Shift-Space
+Toggle floating state of window.
+.It Mod-e
+Toggle fullscreen state of window.
+.It Mod-0
+Show all windows.
+.It Mod-Shift-0
+Set all tags for window.
+.It Mod-,
+Move focus to previous monitor.
+.It Mod-.
+Move focus to next monitor.
+.It Mod-Shift-,
+Move window to previous monitor.
+.It Mod-Shift-.
+Move window to next monitor.
+.It Mod-[\-=]
+Shrink/grow gaps.
+.It Mod-Shift-g
+Toggle gaps.
+.It Mod-Shift-r
+Reload the configuration.
+.It Mod-Shift-q
+Quit
+.Nm .
+.El
+These might differ depending on your keyboard layout.
+.Ss Mouse commands
+.Bl -tag -width 20n -offset indent -compact
+.It Mod-Button1
+Move focused window while dragging.
+Tiled windows will be toggled to the floating state.
+.It Mod-Button2
+Toggle focused window between floating and tiled state.
+.It Mod-Button3
+Resize focused window while dragging.
+Tiled windows will be toggled to the floating state.
+.El
+.Sh STATUS INFORMATION
+.Nm
+writes its status information to standard output.
+If the
+.Fl s
+option is given, the status information is written to the standard input of the
+child process instead.
+.Pp
+Said information has the following format:
+.Bd -ragged -offset indent
+.Ar <monitor>
+.Ar <component>
+.Ar <data>
+.Ed
+.Pp
+.Bl -tag -width 11n -offset 0 -compact
+.It Ar <monitor>
+is the name given to the output.
+.It Ar <component>
+is one of (in order)
+.Em title ,
+.Em appid ,
+.Em fullscreen ,
+.Em floating ,
+.Em selmon ,
+.Em tags ,
+.Em layout .
+.It Ar <data>
+changes depending on
+.Ar <component> .
+.Bl -tag -width 10n -compact
+.It Em title
+The title of the focused window on
+.Ar <monitor>
+or nothing if there is no focused window.
+.It Em appid
+The app_id of the focused window on
+.Ar <monitor>
+or nothing if there is no focused window.
+.It Em fullscreen
+Prints 1 if the focused window on
+.Ar <monitor>
+is in fullscreen state, otherwise prints 0. If there is no focused
+window it prints nothing.
+.It Em floating
+Prints 1 if the focused window on
+.Ar <monitor>
+is in floating state, otherwise prints 0. If there is no focused
+window it prints nothing.
+.It Em selmon
+Prints 1 if
+.Ar <monitor>
+is the selected monitor, otherwise prints 0.
+.It Em tags
+Prints four bitmasks in the following order:
+.Bl -bullet -width 2n -compact
+.It
+Occupied tags of
+.Ar <monitor> .
+.It
+Selected tags of
+.Ar <monitor> .
+.It
+Tags of the focused window on
+.Ar <monitor> .
+.It
+Tags where a window on
+.Ar <monitor>
+requested activation or has urgency hints.
+.El
+The bitmasks are 32-bit unsigned decimal integers.
+.It Em layout
+Prints the symbol of the current layout.
+.El
+.El
+.Ss Examples
+When there is a selected window:
+.Bd -literal -offset indent
+HDMI\-A\-1 title \(ti/source/repos/rwm > man \-l rwm.1
+HDMI\-A\-1 appid footclient
+HDMI\-A\-1 fullscreen 0
+HDMI\-A\-1 floating 0
+HDMI\-A\-1 selmon 1
+HDMI\-A\-1 tags 271 4 4 0
+HDMI\-A\-1 layout [T]
+.Ed
+.Pp
+When there is no selected window:
+.Bd -literal -offset indent
+HDMI\-A\-1 title
+HDMI\-A\-1 appid
+HDMI\-A\-1 fullscreen
+HDMI\-A\-1 floating
+HDMI\-A\-1 selmon 1
+HDMI\-A\-1 tags 271 512 0 0
+HDMI\-A\-1 layout [T]
+.Ed
+.Sh ENVIRONMENT
+These environment variables are used by
+.Nm :
+.Bl -tag -width XDG_RUNTIME_DIR
+.It Ev XDG_RUNTIME_DIR
+A directory where temporary user files, such as the Wayland socket,
+are stored.
+.It Ev RWM_CONFIG
+Path of the Lua configuration file.
+.It Ev XDG_CONFIG_HOME
+A directory containing configuration of various programs and
+libraries, including
+.Nm
+and libxkbcommon.
+.It Ev DISPLAY , WAYLAND_DISPLAY , WAYLAND_SOCKET
+Tell how to connect to an underlying X11 or Wayland server.
+.It Ev WLR_*
+Various variables specific to wlroots.
+.It Ev XKB_* , XLOCALEDIR , XCOMPOSEFILE
+Various variables specific to libxkbcommon.
+.It Ev XCURSOR_PATH
+List of directories to search for XCursor themes in.
+.It Ev HOME
+A directory where there are always dear files there for you.
+Waiting for you to clean them up.
+.El
+.Pp
+These are set by
+.Nm :
+.Bl -tag -width WAYLAND_DISPLAY
+.It Ev WAYLAND_DISPLAY
+Tell how to connect to
+.Nm .
+.It Ev DISPLAY
+If using
+.Nm Xwayland ,
+tell how to connect to the
+.Nm Xwayland
+server.
+.El
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/.config/rwm/config.lua
+User configuration.
+.It Pa /usr/local/share/rwm/config.lua
+A copy of the default configuration.
+.El
+.Sh EXAMPLES
+Start
+.Nm
+with s6 in the background:
+.Dl rwm \-s \(aqs6\-svscan <&\-\(aq
+.Sh SEE ALSO
+.Xr dwm 1 ,
+.Xr foot 1 ,
+.Xr wmenu 1 ,
+.Xr xkeyboard-config 7
+.Sh BUGS
+All of them.

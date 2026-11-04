@@ -1,0 +1,435 @@
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/README.md rwm/README.md
+--- a/README.md	2026-11-04 03:30:02.572123514 +0000
++++ b/README.md	2026-11-04 03:30:02.688358166 +0000
+@@ -17,7 +17,7 @@
+   (`"right-of:eDP-1"`, with `align`), matched by name or description,
+   re-resolved on hotplug. `wlr-randr` / `kanshi` still work.
+ - **Animations**: windows glide when the layout changes, new windows zoom and
+-  fade in; duration and easing curve are configurable and frame-synced.
++  fade in, closing windows fade out, workspace switches slide; duration and easing curve are configurable and frame-synced.
+ - **Gaps**: inner/outer, smart gaps, adjustable at runtime.
+ - **Layouts**: tile, float, monocle, grid.
+ - Window rules, autostart, environment variables, all keybindings (keys, mouse,
+@@ -67,7 +67,6 @@
+ 
+ ## Not (yet) done
+ 
+-- Closing windows are not animated, only opening and moving/resizing.
+ - Pointer/touchpad settings, cursor theme, tag count and log level need a
+   restart to change; everything else reloads live.
+ 
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/config.def.lua rwm/config.def.lua
+--- a/config.def.lua	2026-11-04 03:30:02.572440250 +0000
++++ b/config.def.lua	2026-11-04 03:30:02.677349607 +0000
+@@ -118,6 +118,9 @@
+     move     = true,           -- windows glide when the layout changes
+     open     = true,           -- new windows zoom in
+     fade     = true,           -- new windows also fade in
++    close              = true, -- closing windows fade out
++    workspace          = true, -- workspace switch slides + fades
++    workspace_distance = 8,    -- % of monitor width the slide travels
+   },
+ 
+   keyboard = {
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/luaconf.c rwm/luaconf.c
+--- a/luaconf.c	2026-11-04 03:30:02.573754094 +0000
++++ b/luaconf.c	2026-11-04 03:30:02.677092514 +0000
+@@ -416,7 +416,7 @@
+ parse_animations(P *p, int t)
+ {
+ 	static const char *const keys[] = {"enabled", "duration", "curve", "move",
+-		"open", "fade", NULL};
++		"open", "fade", "close", "workspace", "workspace_distance", NULL};
+ 	Config *c = p->c;
+ 
+ 	check_keys(p, t, keys);
+@@ -426,6 +426,9 @@
+ 	o_bool(p, t, "move", &c->anim_move);
+ 	o_bool(p, t, "open", &c->anim_open);
+ 	o_bool(p, t, "fade", &c->anim_fade);
++	o_bool(p, t, "close", &c->anim_close);
++	o_bool(p, t, "workspace", &c->anim_workspace);
++	o_int(p, t, "workspace_distance", &c->anim_ws_dist, 0, 50);
+ }
+ 
+ static void
+@@ -1151,6 +1154,7 @@
+ 	memcpy(c->urgentcolor, urgent, sizeof(urgent));
+ 	memcpy(c->fullscreen_bg, black, sizeof(black));
+ 	c->anim_duration = 180;
++	c->anim_ws_dist = 8;
+ 	c->anim_curve = CFG_CURVE_OUT_CUBIC;
+ 	c->repeat_rate = 25;
+ 	c->repeat_delay = 600;
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/luaconf.h rwm/luaconf.h
+--- a/luaconf.h	2026-11-04 03:30:02.578084826 +0000
++++ b/luaconf.h	2026-11-04 03:30:02.675502649 +0000
+@@ -92,7 +92,8 @@
+ 	int gap_inner, gap_outer, smartgaps;
+ 
+ 	/* animations */
+-	int anim_enabled, anim_duration, anim_curve, anim_move, anim_open, anim_fade;
++	int anim_enabled, anim_duration, anim_curve, anim_move, anim_open, anim_fade,
++		anim_close, anim_workspace, anim_ws_dist;
+ 
+ 	/* keyboard */
+ 	char *xkb_rules, *xkb_model, *xkb_layout, *xkb_variant, *xkb_options;
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/rwm.1 rwm/rwm.1
+--- a/rwm.1	2026-11-04 03:30:02.578449661 +0000
++++ b/rwm.1	2026-11-04 03:30:06.352449782 +0000
+@@ -138,7 +138,6 @@
+ zoom and fade in.
+ Animations are driven by the output's frame callbacks, so they follow the
+ monitor's refresh rate.
+-Closing windows are not animated.
+ .Pp
+ The default key bindings are as follows:
+ .Bl -tag -width 20n -offset indent -compact
+diff -ruN -x '*.o' -x default_config.h -x test_luaconf rwm.orig/rwm.c rwm/rwm.c
+--- a/rwm.c	2026-11-04 03:30:02.569108461 +0000
++++ b/rwm.c	2026-11-04 03:30:02.687957629 +0000
+@@ -136,7 +136,7 @@
+ 	struct wlr_box vis; /* geometry on screen right now (differs from geom while animating) */
+ 	struct wlr_box anim_from, anim_to;
+ 	int64_t anim_start, fade_start; /* ms, CLOCK_MONOTONIC */
+-	int anim_active, fading, anim_open, anim_snap;
++	int anim_active, fading, anim_open, anim_snap, anim_ws;
+ 	struct wlr_scene_node *snapshot; /* content shown while resizing */
+ 	uint32_t resize_serial; /* nonzero while waiting for a resized buffer */
+ 	struct wlr_box bounds; /* only width and height are used */
+@@ -231,6 +231,7 @@
+ 	struct wlr_box w; /* window area, layout-relative */
+ 	struct wl_list layers[4]; /* LayerSurface.link */
+ 	const Layout *lt[2];
++	int ws_dir; /* -1/0/+1: tag switch direction, consumed by transactionapply */
+ 	unsigned int seltags;
+ 	unsigned int sellt;
+ 	uint32_t tagset[2];
+@@ -462,6 +463,15 @@
+ static struct wl_event_source *transaction_timer;
+ static int transaction_waiting;
+ static struct wl_array ghosts; /* struct wlr_scene_node *, unmapped clients */
++typedef struct {
++	struct wl_list link;
++	struct wlr_scene_node *node;
++	Monitor *mon;
++	int x0, y0, x1, y1;
++	int64_t start;
++	float alpha;
++} Ghost;
++static struct wl_list animghosts; /* Ghost.link, animated copies of closed/hidden clients */
+ static struct wl_array offmons; /* char *, names of outputs turned off by clients */
+ 
+ /* global event handlers */
+@@ -537,6 +547,10 @@
+ static int64_t nowms(void);
+ static int reloadfd(int fd, uint32_t mask, void *data);
+ static void animstop(Client *c);
++static void ghostanim(Monitor *m, struct wlr_scene_node *node, int dx, int dy);
++static void ghostfade(struct wlr_scene_node *node, float a, float ratio);
++static void dropghosts(Monitor *m);
++static void autostartidle(void *data);
+ 
+ /* configuration: loaded from Lua, see luaconf.c and config.def.lua */
+ static Config *cfg;
+@@ -682,6 +696,16 @@
+ 			&& c->scene->node.enabled && !c->isfullscreen
+ 			&& c->mon->wlr_output->enabled;
+ 
++	if (can && c->anim_ws) {
++		from = c->geom;
++		from.x += c->anim_ws * (c->mon->m.width * cfg->anim_ws_dist / 100);
++		c->anim_ws = 0;
++		c->anim_open = 0;
++		animstart(c, from, c->geom, 1); /* 1 = fade in as well */
++		return;
++	}
++	c->anim_ws = 0;
++
+ 	if (can && c->anim_active && wlr_box_equal(&c->geom, &c->anim_to))
+ 		return; /* already on its way there, don't restart the animation */
+ 
+@@ -990,6 +1014,7 @@
+ 	if (transaction_idle)
+ 		wl_event_source_remove(transaction_idle);
+ 	wl_event_source_remove(transaction_timer);
++	dropghosts(NULL);
+ 	wl_array_release(&ghosts);
+ 	wl_array_for_each(name, &offmons)
+ 		free(*name);
+@@ -1083,6 +1108,8 @@
+ 	/* update selmon if needed and
+ 	 * move closed monitor's clients to the focused one */
+ 	Client *c;
++
++	dropghosts(m);
+ 	int i = 0, nmons = wl_list_length(&mons);
+ 	if (!nmons) {
+ 		selmon = NULL;
+@@ -1301,10 +1328,15 @@
+ 	struct wlr_surface *surface = layer_surface->surface;
+ 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->pending.layer]];
+ 
+-	if (!layer_surface->output
+-			&& !(layer_surface->output = selmon ? selmon->wlr_output : NULL)) {
+-		wlr_layer_surface_v1_destroy(layer_surface);
+-		return;
++	if (!layer_surface->output) {
++		Monitor *m = selmon;
++		if (!m && !wl_list_empty(&mons))
++			m = wl_container_of(mons.next, m, link);
++		if (!m) {
++			wlr_layer_surface_v1_destroy(layer_surface);
++			return;
++		}
++		layer_surface->output = m->wlr_output;
+ 	}
+ 
+ 	l = layer_surface->data = ecalloc(1, sizeof(*l));
+@@ -2693,7 +2725,6 @@
+ 	if (fd_set_nonblock(STDOUT_FILENO) < 0)
+ 		close(STDOUT_FILENO);
+ 
+-	runautostart();
+ 	if (startuperr[0])
+ 		sendnotify("rwm: config error, using defaults", startuperr);
+ 	else if (cfg->warnings[0])
+@@ -2704,6 +2735,10 @@
+ 	/* At this point the outputs are initialized, choose initial selmon based on
+ 	 * cursor position, and set default cursor image */
+ 	selmon = xytomon(cursor->x, cursor->y);
++	if (!selmon && !wl_list_empty(&mons))
++		selmon = wl_container_of(mons.next, selmon, link);
++	/* autostart only once outputs and selmon exist and the event loop runs */
++	wl_event_loop_add_idle(event_loop, autostartidle, NULL);
+ 
+ 	/* TODO hack to get cursor to display in its initial location (100, 100)
+ 	 * instead of (0, 0) and then jumping. Still may not be fully
+@@ -3005,6 +3040,7 @@
+ 
+ 	transaction_timer = wl_event_loop_add_timer(event_loop, transactiontimeout, NULL);
+ 	wl_array_init(&ghosts);
++	wl_list_init(&animghosts);
+ 	wl_array_init(&offmons);
+ 
+ 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
+@@ -3308,9 +3344,10 @@
+ void
+ transactionapply(void)
+ {
+-	struct wlr_scene_node **ghost;
++	struct wlr_scene_node **ghost, *gn;
+ 	Client *c;
+ 	Monitor *m;
++	int vis;
+ 
+ 	wl_event_source_timer_update(transaction_timer, 0);
+ 	transaction_waiting = 0;
+@@ -3325,12 +3362,24 @@
+ 			continue;
+ 		/* A client that just became visible appears in place, no gliding */
+ 		c->anim_snap = !c->scene->node.enabled;
+-		if (c->mon->wlr_output->enabled)
+-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, c->mon));
++		c->anim_ws = (c->anim_snap && cfg->anim_enabled && cfg->anim_workspace)
++				? c->mon->ws_dir : 0;
++		if (c->mon->wlr_output->enabled) {
++			vis = VISIBLEON(c, c->mon);
++			/* a window being hidden by a tag switch slides out as a ghost */
++			if (!vis && c->scene->node.enabled && c->mon->ws_dir
++					&& cfg->anim_enabled && cfg->anim_workspace
++					&& cfg->anim_duration > 0
++					&& (gn = snapshot(&c->scene->node, c->scene->node.parent, NULL)))
++				ghostanim(c->mon, gn, -c->mon->ws_dir
++						* (c->mon->m.width * cfg->anim_ws_dist / 100), 0);
++			wlr_scene_node_set_enabled(&c->scene->node, vis);
++		}
+ 		applygeom(c);
+ 	}
+ 
+ 	wl_list_for_each(m, &mons, link) {
++		m->ws_dir = 0;
+ 		if (m->wlr_output->enabled)
+ 			wlr_scene_node_set_enabled(&m->fullscreen_bg->node,
+ 					(c = focustop(m)) && c->isfullscreen);
+@@ -3427,7 +3476,10 @@
+ 		/* Keep showing the client until the transaction rearranging the
+ 		 * remaining ones is applied, to not show a gap */
+ 		if ((ghost = snapshot(&c->scene->node, c->scene->node.parent, NULL))) {
+-			if ((slot = wl_array_add(&ghosts, sizeof(ghost))))
++			if (cfg->anim_enabled && cfg->anim_close && cfg->anim_duration > 0
++					&& c->mon && c->mon->wlr_output->enabled)
++				ghostanim(c->mon, ghost, 0, c->vis.height / 24);
++			else if ((slot = wl_array_add(&ghosts, sizeof(ghost))))
+ 				*slot = ghost;
+ 			else
+ 				wlr_scene_node_destroy(ghost);
+@@ -3612,11 +3664,19 @@
+ void
+ view(const Arg *arg)
+ {
++	unsigned int old;
++	int a, b;
++
+ 	if (!selmon || (arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
+ 		return;
++	old = selmon->tagset[selmon->seltags];
+ 	selmon->seltags ^= 1; /* toggle sel tagset */
+ 	if (arg->ui & TAGMASK)
+ 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
++	a = (old & TAGMASK) ? __builtin_ctz(old) : 0;
++	b = (selmon->tagset[selmon->seltags] & TAGMASK)
++			? __builtin_ctz(selmon->tagset[selmon->seltags]) : 0;
++	selmon->ws_dir = (b > a) - (b < a);
+ 	focusclient(focustop(selmon), NULL, 1);
+ 	arrange(selmon);
+ 	printstatus();
+@@ -4382,6 +4442,66 @@
+ 	}
+ }
+ 
++void
++ghostanim(Monitor *m, struct wlr_scene_node *node, int dx, int dy)
++{
++	Ghost *g = ecalloc(1, sizeof(*g));
++
++	g->node = node;
++	g->mon = m;
++	g->x0 = node->x;
++	g->y0 = node->y;
++	g->x1 = g->x0 + dx;
++	g->y1 = g->y0 + dy;
++	g->start = nowms();
++	g->alpha = 1.0f;
++	wl_list_insert(&animghosts, &g->link);
++	wlr_output_schedule_frame(m->wlr_output);
++}
++
++void
++ghostfade(struct wlr_scene_node *node, float a, float ratio)
++{
++	struct wlr_scene_node *child;
++	struct wlr_scene_rect *rect;
++	float col[4];
++	int i;
++
++	switch (node->type) {
++	case WLR_SCENE_NODE_TREE:
++		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link)
++			ghostfade(child, a, ratio);
++		break;
++	case WLR_SCENE_NODE_BUFFER:
++		wlr_scene_buffer_set_opacity(wlr_scene_buffer_from_node(node), a);
++		break;
++	case WLR_SCENE_NODE_RECT: /* borders fade too */
++		rect = wlr_scene_rect_from_node(node);
++		for (i = 0; i < 4; i++)
++			col[i] = rect->color[i] * ratio;
++		wlr_scene_rect_set_color(rect, col);
++		break;
++	default:
++		break;
++	}
++}
++
++/* m == NULL: only free the records (scene is torn down separately) */
++void
++dropghosts(Monitor *m)
++{
++	Ghost *g, *tmp;
++
++	wl_list_for_each_safe(g, tmp, &animghosts, link) {
++		if (m && g->mon != m)
++			continue;
++		if (m)
++			wlr_scene_node_destroy(g->node);
++		wl_list_remove(&g->link);
++		free(g);
++	}
++}
++
+ /* Called for every frame of monitor m, before it is rendered */
+ void
+ animstep(Monitor *m)
+@@ -4389,8 +4509,9 @@
+ 	Client *c;
+ 	int64_t now = 0;
+ 	int more = 0, dur = MAX(cfg->anim_duration, 1);
+-	double t;
++	double t, e;
+ 	float a;
++	Ghost *g, *gt;
+ 
+ 	wl_list_for_each(c, &clients, link) {
+ 		if (c->mon != m || !(c->anim_active || c->fading))
+@@ -4421,6 +4542,27 @@
+ 		if (c->anim_active || c->fading)
+ 			more = 1;
+ 	}
++	wl_list_for_each_safe(g, gt, &animghosts, link) {
++		if (g->mon != m)
++			continue;
++		if (!now)
++			now = nowms();
++		t = (double)(now - g->start) / dur;
++		if (t >= 1.0) {
++			wlr_scene_node_destroy(g->node);
++			wl_list_remove(&g->link);
++			free(g);
++			continue;
++		}
++		e = ease(cfg->anim_curve, t);
++		wlr_scene_node_set_position(g->node,
++				g->x0 + (int)lround((g->x1 - g->x0) * e),
++				g->y0 + (int)lround((g->y1 - g->y0) * e));
++		a = 1.0f - (float)ease(CFG_CURVE_OUT_CUBIC, t);
++		ghostfade(g->node, a, g->alpha > 0.001f ? a / g->alpha : 0.0f);
++		g->alpha = a;
++		more = 1;
++	}
+ 	if (more)
+ 		wlr_output_schedule_frame(m->wlr_output);
+ }
+@@ -4552,22 +4694,34 @@
+ runautostart(void)
+ {
+ 	const CfgCmd *cmd;
++	sigset_t set;
+ 	int i;
+ 
+ 	for (i = 0; i < cfg->nautostart; i++) {
+ 		cmd = &cfg->autostart[i];
++		wlr_log(WLR_INFO, "autostart: %s", cmd->sh ? cmd->sh : cmd->argv[0]);
+ 		if (fork() == 0) {
++			sigemptyset(&set);
++			sigprocmask(SIG_SETMASK, &set, NULL);
+ 			dup2(STDERR_FILENO, STDOUT_FILENO);
+ 			setsid();
+ 			if (cmd->sh)
+ 				execl("/bin/sh", "/bin/sh", "-c", cmd->sh, (char *)NULL);
+ 			else
+ 				execvp(cmd->argv[0], cmd->argv);
++			fprintf(stderr, "rwm: autostart '%s' failed: %s\n",
++					cmd->sh ? cmd->sh : cmd->argv[0], strerror(errno));
+ 			_exit(127);
+ 		}
+ 	}
+ }
+ 
++void
++autostartidle(void *data)
++{
++	runautostart();
++}
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -4622,6 +4776,8 @@
+ 		setenv(cfg->env[i].name, cfg->env[i].value, 1);
+ 	if (cfg->cursor_theme)
+ 		setenv("XCURSOR_THEME", cfg->cursor_theme, 1);
++	setenv("XDG_SESSION_TYPE", "wayland", 0);
++	setenv("XDG_CURRENT_DESKTOP", "rwm", 0);
+ 	snprintf(buf, sizeof(buf), "%d", cfg->cursor_size);
+ 	setenv("XCURSOR_SIZE", buf, 1);

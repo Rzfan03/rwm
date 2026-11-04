@@ -1,0 +1,5 @@
+rwm
+*.o
+*-protocol.h
+default_config.h
+tests/test_luaconf
